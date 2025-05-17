@@ -90,6 +90,7 @@ func checkAndNotify() {
 
 	now := time.Now().UTC()
 	vnLoc, _ := time.LoadLocation("Asia/Ho_Chi_Minh")
+	log.Println("Time now - time in current machine: ", now)
 	log.Println("Time now - location Ho_Chi_Minh: ", now.In(vnLoc))
 	log.Println("Number of appointments at this time: ", len(appointments))
 
