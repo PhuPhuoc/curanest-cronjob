@@ -53,12 +53,12 @@ func fetchAppointments() ([]Appointment, error) {
 	return result.Data, nil
 }
 
-func sendNotification(accountID, contentTime string) error {
+func sendNotification(accountID, minutes string) error {
 	url := "https://api.curanest.com.vn/notification/external/rpc/notifications"
 
 	body := map[string]string{
 		"account-id": accountID,
-		"content":    fmt.Sprintf("Bạn có một cuộc hẹn vào lúc %s, hãy lên đường nào!", contentTime),
+		"content":    fmt.Sprintf("Bạn có một cuộc hẹn sẽ bắt đầu sau %s phút nữa, hãy lên đường nào!", minutes),
 		"route":      "/(tabs)/schedule",
 	}
 
@@ -89,24 +89,23 @@ func checkAndNotify() {
 	}
 
 	now := time.Now().UTC()
-	vnLoc, _ := time.LoadLocation("Asia/Ho_Chi_Minh")
-	log.Println("Time now - time in current machine: ", now)
-	log.Println("Time now - location Ho_Chi_Minh: ", now.In(vnLoc))
-	log.Println("Number of appointments at this time: ", len(appointments))
+	log.Println("🕒 Current time:", now)
+	log.Println("📅 Total appointments fetched:", len(appointments))
 
 	for _, appt := range appointments {
-		if appt.Status == "upcoming" {
+		if appt.Status != "upcoming" {
 			continue
 		}
+
 		diff := appt.EstDate.Sub(now)
-		if diff > 0 && diff <= time.Hour {
-			vnTime := appt.EstDate.In(vnLoc)
-			timeStr := vnTime.Format("15:04 02-01-2006")
-			err := sendNotification(appt.NursingID, timeStr)
+		minutesUntil := int(diff.Minutes())
+
+		if minutesUntil > 0 && minutesUntil <= 60 {
+			err := sendNotification(appt.NursingID, fmt.Sprintf("%d", minutesUntil))
 			if err != nil {
 				log.Printf("❌ Failed to notify for appointment %s: %v", appt.ID, err)
 			} else {
-				log.Printf("✅ Notification sent for appointment %s", appt.ID)
+				log.Printf("✅ Notification sent for appointment %s (%d phút nữa)", appt.ID, minutesUntil)
 			}
 		}
 	}
@@ -117,11 +116,7 @@ func main() {
 
 	s := gocron.NewScheduler(time.UTC)
 
-	// Job chạy mỗi 30 phút
 	s.Every(30).Minutes().Do(checkAndNotify)
-
-	// 👉 Dùng cho testing: mỗi 30 giây (comment dòng trên lại nếu cần test)
-	// s.Every(30).Seconds().Do(checkAndNotify)
 
 	s.StartBlocking()
 }
