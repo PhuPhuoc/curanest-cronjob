@@ -73,8 +73,9 @@ func sendNotification(accountID, content string) error {
 	return nil
 }
 
-func checkAndNotify() {
-	log.Println("⏳ Running scheduled job...")
+func remindStaffAttendAppointment() {
+	log.Println("⏰ Scheduled jobs:")
+	log.Println("- remindStaffAttendAppointment: every 30 minutes")
 	appointments, err := fetchAppointments()
 	if err != nil {
 		log.Printf("❌ Error fetching appointments: %v", err)
@@ -87,6 +88,7 @@ func checkAndNotify() {
 		if appt.Status != "upcoming" {
 			continue
 		}
+
 		diff := appt.EstDate.Sub(now)
 		minutesUntil := int(diff.Minutes())
 		if minutesUntil > 0 && minutesUntil <= 60 {
@@ -98,10 +100,14 @@ func checkAndNotify() {
 			}
 		}
 	}
+	log.Println("===============================================================")
 }
 
-func sendPaymentReminders() {
+func informServicePayment() {
+	log.Println("⏰ Scheduled jobs:")
 	log.Println("💰 Running payment reminder job...")
+	log.Println("  - daily at 00:00 UTC (07:00 GMT+7)")
+	log.Println("  - daily at 06:00 UTC (13:00 GMT+7)")
 	appointments, err := fetchAppointments()
 	if err != nil {
 		log.Printf("❌ Error fetching appointments: %v", err)
@@ -117,7 +123,6 @@ func sendPaymentReminders() {
 			reminderMsg := fmt.Sprintf("Nhắc nhở: bạn có một cuộc hẹn đã được lên lịch nhưng chưa thanh toán.\n" +
 				"Vui lòng thanh toán để đảm bảo dịch vụ của bạn.")
 
-			// Gửi thông báo cho cả bệnh nhân và y tá
 			// send to relatives
 			err := sendNotification(appt.PatientID, reminderMsg)
 			if err != nil {
@@ -135,6 +140,7 @@ func sendPaymentReminders() {
 			// 	log.Printf("✅ Payment reminder sent to nurse for appointment %s", appt.ID)
 			// }
 		}
+		log.Println("===============================================================")
 	}
 }
 
@@ -142,18 +148,13 @@ func main() {
 	log.Println("🚀 Cron service started")
 	s := gocron.NewScheduler(time.UTC)
 
-	s.Every(30).Minutes().Do(checkAndNotify)
+	s.Every(30).Minutes().Do(remindStaffAttendAppointment)
 
 	// cronjob nhắc thanh toán vào 0h UTC (7h Việt Nam)
-	s.Every(1).Day().At("00:00").Do(sendPaymentReminders)
+	s.Every(1).Day().At("00:00").Do(informServicePayment)
 
 	// cronjob nhắc thanh toán vào 6h UTC (13h Việt Nam)
-	s.Every(1).Day().At("06:00").Do(sendPaymentReminders)
-
-	log.Println("⏰ Scheduled jobs:")
-	log.Println("  - checkAndNotify: every 30 minutes")
-	log.Println("  - sendPaymentReminders: daily at 00:00 UTC (07:00 GMT+7)")
-	log.Println("  - sendPaymentReminders: daily at 06:00 UTC (13:00 GMT+7)")
+	s.Every(1).Day().At("06:00").Do(informServicePayment)
 
 	s.StartBlocking()
 }
