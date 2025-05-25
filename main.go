@@ -148,7 +148,7 @@ func informServicePayment() {
 			}
 
 			// send to relatives
-			err = sendNotification(relativesId.String(), reminderMsg, "/(tabs)/schedule")
+			err = sendNotification(relativesId.String(), reminderMsg, "/(profile)/payment-history")
 			if err != nil {
 				log.Printf("❌ Failed to send payment reminder to patient for appointment %s: %v", appt.ID, err)
 				return
