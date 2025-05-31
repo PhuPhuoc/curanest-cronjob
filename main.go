@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/go-co-op/gocron"
 	"github.com/google/uuid"
+	"github.com/joho/godotenv"
 )
 
 type Appointment struct {
@@ -41,18 +44,21 @@ type relativesIDResponse struct {
 	Success bool `json:"success"`
 }
 
+var baseAPIURL string
+
 func fetchAppointments() ([]Appointment, error) {
 	today := time.Now().Format("2006-01-02")
 	tomorrow := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
 	url := fmt.Sprintf(
-		"https://api.curanest.com.vn/appointment/api/v1/appointments?est-date-from=%s&est-date-to=%s&apply-paging=false",
-		today, tomorrow,
+		"%s/appointment/api/v1/appointments?est-date-from=%s&est-date-to=%s&apply-paging=false",
+		baseAPIURL, today, tomorrow,
 	)
 	resp, err := http.Get(url)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+
 	var result AppointmentResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
@@ -60,11 +66,12 @@ func fetchAppointments() ([]Appointment, error) {
 	return result.Data, nil
 }
 
-func sendNotification(accountID, content, route string) error {
-	url := "https://api.curanest.com.vn/notification/external/rpc/notifications"
+func sendNotification(accountID, content, subID, route string) error {
+	url := fmt.Sprintf("%s/notification/external/rpc/notifications", baseAPIURL)
 	body := map[string]string{
 		"account-id": accountID,
 		"content":    content,
+		"sub-id":     subID,
 		"route":      route,
 	}
 
@@ -77,8 +84,8 @@ func sendNotification(accountID, content, route string) error {
 	if err != nil {
 		return err
 	}
-
 	defer resp.Body.Close()
+
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("failed to send notification, status: %d", resp.StatusCode)
 	}
@@ -87,30 +94,32 @@ func sendNotification(accountID, content, route string) error {
 
 func remindNurseAttendAppointment() {
 	log.Println("⏰ Scheduled jobs:")
-	log.Println("- remindStaffAttendAppointment: every 30 minutes")
+	log.Println("- remindStaffAttendAppointment running...")
+
 	appointments, err := fetchAppointments()
 	if err != nil {
 		log.Printf("❌ Error fetching appointments: %v", err)
 		return
 	}
+
 	now := time.Now().UTC()
 	log.Println("🕒 Current time:", now)
 	log.Println("📅 Total appointments fetched:", len(appointments))
-	for _, appt := range appointments {
-		if appt.NursingID == nil {
-			continue
-		}
-		if appt.Status != "upcoming" {
-			continue
-		}
 
+	for _, appt := range appointments {
+		if appt.NursingID == nil || appt.Status != "upcoming" {
+			continue
+		}
 		diff := appt.EstDate.Sub(now)
 		minutesUntil := int(diff.Minutes())
+
 		if minutesUntil > 0 && minutesUntil <= 60 {
 			err := sendNotification(
 				appt.NursingID.String(),
 				fmt.Sprintf("Bạn có một cuộc hẹn sẽ bắt đầu sau %d phút nữa, hãy lên đường nào!", minutesUntil),
-				"/(tabs)/schedule")
+				appt.ID.String(),
+				"/(tabs)/home",
+			)
 			if err != nil {
 				log.Printf("❌ Failed to notify for appointment %s: %v", appt.ID, err)
 			} else {
@@ -124,8 +133,7 @@ func remindNurseAttendAppointment() {
 func informServicePayment() {
 	log.Println("⏰ Scheduled jobs:")
 	log.Println("💰 Running payment reminder job...")
-	log.Println("  - daily at 00:00 UTC (07:00 GMT+7)")
-	log.Println("  - daily at 06:00 UTC (13:00 GMT+7)")
+
 	appointments, err := fetchAppointments()
 	if err != nil {
 		log.Printf("❌ Error fetching appointments: %v", err)
@@ -138,43 +146,28 @@ func informServicePayment() {
 
 	for _, appt := range appointments {
 		if !now.After(appt.EstDate) && !appt.IsPaid {
-			reminderMsg := fmt.Sprintf("Nhắc nhở: bạn có một cuộc hẹn đã được lên lịch nhưng chưa thanh toán.\n" +
-				"Vui lòng thanh toán để đảm bảo dịch vụ của bạn.")
+			reminderMsg := "Nhắc nhở: bạn có một cuộc hẹn đã được lên lịch nhưng chưa thanh toán.\nVui lòng thanh toán để đảm bảo dịch vụ của bạn."
 
 			relativesId, err := getRelativesId(appt.PatientID)
 			if err != nil {
-				log.Printf("❌ Failed to get relatives-id of patient %v", err)
-				return
+				log.Printf("❌ Failed to get relatives-id of patient: %v", err)
+				continue
 			}
 
-			// send to relatives
-			err = sendNotification(relativesId.String(), reminderMsg, "/(profile)/payment-history")
+			err = sendNotification(relativesId.String(), reminderMsg, appt.ID.String(), "/detail-payment")
 			if err != nil {
-				log.Printf("❌ Failed to send payment reminder to patient for appointment %s: %v", appt.ID, err)
-				return
+				log.Printf("❌ Failed to send payment reminder for appointment %s: %v", appt.ID, err)
 			} else {
-				log.Printf("✅ Payment reminder sent to patient for appointment %s", appt.ID)
+				log.Printf("✅ Payment reminder sent for appointment %s", appt.ID)
 			}
-
-			// send to nurse
-			// nurseMsg := fmt.Sprintf("Thông báo: Cuộc hẹn (ID: %s) chưa được thanh toán. Vui lòng kiểm tra lại trước khi bắt đầu dịch vụ.", appt.ID)
-			// err = sendNotification(appt.NursingID, nurseMsg)
-			// if err != nil {
-			// 	log.Printf("❌ Failed to send payment reminder to nurse for appointment %s: %v", appt.ID, err)
-			// } else {
-			// 	log.Printf("✅ Payment reminder sent to nurse for appointment %s", appt.ID)
-			// }
 		}
-		log.Println("===============================================================")
 	}
+	log.Println("===============================================================")
 }
 
 func getRelativesId(patientId uuid.UUID) (*uuid.UUID, error) {
 	ctx := context.Background()
-	url := fmt.Sprintf(
-		"https://api.curanest.com.vn/patient/api/v1/patients/%v/relatives-id",
-		patientId,
-	)
+	url := fmt.Sprintf("%s/patient/api/v1/patients/%v/relatives-id", baseAPIURL, patientId)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -200,16 +193,33 @@ func getRelativesId(patientId uuid.UUID) (*uuid.UUID, error) {
 }
 
 func main() {
-	log.Println("🚀 Cron service started")
+	log.Println("🚀 Starting Cronjob Service")
+	_ = godotenv.Load()
+
+	baseAPIURL = os.Getenv("BASE_API_URL")
+	if baseAPIURL == "" {
+		log.Fatal("❌ BASE_API_URL is not set")
+	}
+
+	remindInterval, err := strconv.Atoi(os.Getenv("REMIND_INTERVAL_MINUTES"))
+	if err != nil {
+		remindInterval = 30
+	}
+
+	paymentTime1 := os.Getenv("PAYMENT_TIME_1")
+	if paymentTime1 == "" {
+		paymentTime1 = "00:00"
+	}
+	paymentTime2 := os.Getenv("PAYMENT_TIME_2")
+	if paymentTime2 == "" {
+		paymentTime2 = "06:00"
+	}
+
+	// Start scheduler
 	s := gocron.NewScheduler(time.UTC)
-
-	s.Every(30).Minutes().Do(remindNurseAttendAppointment)
-
-	// cronjob nhắc thanh toán vào 0h UTC (7h Việt Nam)
-	s.Every(1).Day().At("00:00").Do(informServicePayment)
-
-	// cronjob nhắc thanh toán vào 6h UTC (13h Việt Nam)
-	s.Every(1).Day().At("06:00").Do(informServicePayment)
+	s.Every(remindInterval).Minutes().Do(remindNurseAttendAppointment)
+	s.Every(1).Day().At(paymentTime1).Do(informServicePayment)
+	s.Every(1).Day().At(paymentTime2).Do(informServicePayment)
 
 	s.StartBlocking()
 }
