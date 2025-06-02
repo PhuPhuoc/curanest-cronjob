@@ -107,13 +107,19 @@ func remindNurseAttendAppointment() {
 	log.Println("📅 Total appointments fetched:", len(appointments))
 
 	for _, appt := range appointments {
-		if appt.NursingID == nil || appt.Status != "upcoming" {
+
+		if appt.NursingID == nil || appt.Status == "upcoming" {
+			// log.Printf("🕒 appt-id: %v - appt.NursingID: %v - status: %v \n - date: %v", appt.ID, appt.NursingID, appt.Status, appt.EstDate)
 			continue
 		}
+
 		diff := appt.EstDate.Sub(now)
 		minutesUntil := int(diff.Minutes())
 
+		// log.Printf("🕒 appt-id: %v - est-date: %v \n diff: %v ~ minutesUntil: %v", appt.ID, appt.EstDate, diff, minutesUntil)
+
 		if minutesUntil > 0 && minutesUntil <= 60 {
+			log.Printf("🕒 Current in date appt-id: %v - est-date: %v \n", appt.ID, appt.EstDate)
 			err := sendNotification(
 				appt.NursingID.String(),
 				fmt.Sprintf("Bạn có một cuộc hẹn sẽ bắt đầu sau %d phút nữa, hãy lên đường nào!", minutesUntil),
